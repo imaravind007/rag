@@ -18,7 +18,7 @@ langchain-openai
 langchain_community
 langchain_docling
 pandas
-opencyxl
+openpyxl
 docling
 pypdfium2
 openai
