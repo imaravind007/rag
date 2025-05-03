@@ -38,7 +38,7 @@ if 'buffer_memory' not in st.session_state:
     st.session_state['buffer_memory'] = ConversationBufferWindowMemory(k=5, return_messages=True)
 
 # Chat setup
-llm = ChatOpenAI(model_name="gpt-4o", openai_api_key=os.getenv("OPEN_API_KEY"))
+llm = ChatOpenAI(model_name="gpt-4o-mini", openai_api_key=os.getenv("OPEN_API_KEY"))
 
 system_msg_template = SystemMessagePromptTemplate.from_template(
     template="Answer the question as truthfully as possible using the provided context, and if the answer is not contained within the text below, say 'I don't know'"
@@ -55,6 +55,8 @@ if 'energy_namespaces' not in st.session_state:
     st.session_state['energy_namespaces'] = get_project_names(index)
 
 response_container = st.container()
+textcontainer = st.container()
+
 
 if 'file_uploaded' not in st.session_state:
     st.session_state.file_uploaded = False
@@ -77,7 +79,8 @@ if st.session_state['current_page'] == 'Upload Document':
     st.subheader("Upload Renewable Energy Document")
     energy_doc_name_input = st.text_input("Energy Document Namespace:", key="energy_namespace_input")
     energy_namespace = energy_doc_name_input.strip().replace(" ", "-")
-    uploaded_file = st.file_uploader("Choose a file", type=["txt", "pdf", "docx"], key="file_uploader")
+    uploaded_file = st.file_uploader("Choose a file", type=["txt", "pdf", "docx", "xlsx"], key="file_uploader")
+
 
     if uploaded_file and st.button('Upload'):
         with st.spinner("Processing and embedding the document..."):

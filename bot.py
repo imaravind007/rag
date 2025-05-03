@@ -5,6 +5,7 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
 from openai import OpenAI
 from docx import Document
+import pandas as pd
 import os
 import io
 import fitz
@@ -79,6 +80,14 @@ def pdf_to_text(content, file_extension):
     elif file_extension == ".docx":
         doc = Document(io.BytesIO(content))
         return "\n".join([paragraph.text for paragraph in doc.paragraphs])
+    elif file_extension == ".xlsx":
+        excel_io = io.BytesIO(content)
+        dfs = pd.read_excel(excel_io, sheet_name=None)  # All sheets
+        combined_text = ""
+        for sheet_name, df in dfs.items():
+            combined_text += f"\n--- Sheet: {sheet_name} ---\n"
+            combined_text += df.fillna("").astype(str).to_csv(index=False, header=True)
+        return combined_text
     else:
         raise ValueError(f"Unsupported file type: {file_extension}")
 
