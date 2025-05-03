@@ -24,6 +24,8 @@ Renewable Energy Copilot is a Streamlit-based application that leverages OpenAI 
 
 ---
 
+![Architecture Diagram](architecture-diagram.png)
+
 ## Installation
 
 1. Clone the repository:
