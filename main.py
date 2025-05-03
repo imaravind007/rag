@@ -52,6 +52,10 @@ if "PINE_API_KEY" not in st.session_state:
     st.session_state.PINE_API_KEY = os.getenv("PINE_API_KEY", "")
 
 with st.sidebar:
+    st.markdown(
+    "# <span style='color:#e11d48; font-weight:700'>Red DrAIgon</span>",
+    unsafe_allow_html=True
+    )
     st.divider()
     st.markdown("### 🔑 API Keys")
     st.session_state.OPENAI_API_KEY = st.text_input(
