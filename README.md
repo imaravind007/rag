@@ -14,6 +14,16 @@ Renewable Energy Copilot is a Streamlit-based application that leverages OpenAI 
 
 ---
 
+## Technical Details
+
+- **Embedding Model**: Uses OpenAI's `text-embedding-3-large` model for generating vector embeddings of documents.
+- **Chat Model**: Powered by OpenAI's `gpt-4` for natural language understanding and responses.
+- **Vector Database**: Serverless Pinecone is used for storing and querying vector embeddings efficiently.
+- **Framework**: Built with [Streamlit](https://streamlit.io/) for a fast and interactive user interface.
+- **Document Parsing**: Utilizes libraries like `Docling` for handling various data types such as  PDF, DOCX, TXT, and XLSX.
+
+---
+
 ## Installation
 
 1. Clone the repository:
@@ -38,3 +48,18 @@ Renewable Energy Copilot is a Streamlit-based application that leverages OpenAI 
 6. Usage:
    ```bash
    streamlit run main.py
+
+
+## Dependencies
+   - Streamlit
+   - OpenAI
+   - Pinecone
+   - LangChain
+   - PyMuPDF
+   - python-docx
+
+## Contributing
+Contributions are welcome! Please fork the repository and submit a pull request for any enhancements or bug fixes.
+
+## License 
+This project is licensed under the MIT License. See the LICENSE file for details.
