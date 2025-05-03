@@ -80,7 +80,7 @@ def pdf_to_text(content, file_extension):
     elif file_extension == ".docx":
         doc = Document(io.BytesIO(content))
         return "\n".join([paragraph.text for paragraph in doc.paragraphs])
-    elif file_extension == ".xlsx":
+    elif file_extension in [".xlsx", ".xlsm"]:   
         excel_io = io.BytesIO(content)
         dfs = pd.read_excel(excel_io, sheet_name=None)  # All sheets
         combined_text = ""
