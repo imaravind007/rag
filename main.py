@@ -16,7 +16,7 @@ from streamlit_chat import message
 import os
 import time
 
-from kelly_bot_test import *
+from bot import *
 
 # Load environment variables
 load_dotenv()
