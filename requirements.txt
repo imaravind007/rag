@@ -1,0 +1,17 @@
+streamlit
+streamlit_chat
+langchain
+sentence_transformers
+tiktoken
+openai
+python-dotenv
+huggingface_hub
+pinecone-client
+unstructured 
+boto3
+botocore
+PyMuPDF
+python-docx
+llmsherpa
+pinecone
+langchain-openai
