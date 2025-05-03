@@ -55,8 +55,6 @@ if 'energy_namespaces' not in st.session_state:
     st.session_state['energy_namespaces'] = get_project_names(index)
 
 response_container = st.container()
-textcontainer = st.container()
-bucket_name = os.getenv("S3_BUCKET_NAME")
 
 if 'file_uploaded' not in st.session_state:
     st.session_state.file_uploaded = False

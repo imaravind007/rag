@@ -16,3 +16,4 @@ llmsherpa
 pinecone
 langchain-openai
 langchain_community
+langchain_docling
