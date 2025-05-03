@@ -1,0 +1,9 @@
+# .streamlit/config.toml   ← create once, don’t import in Python
+[theme]
+base               = "dark"        # ← the key line
+primaryColor       = "#14E39C"
+backgroundColor    = "#0E1117"
+secondaryBackgroundColor = "#161B22"
+textColor          = "#E6EDF3"
+font               = "sans serif"
+runOnSave = true

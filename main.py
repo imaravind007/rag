@@ -1,140 +1,311 @@
-from langchain_community.chat_models import ChatOpenAI
-from langchain.chains import ConversationChain
-from langchain.chains.conversation.memory import ConversationBufferWindowMemory
-from langchain.prompts import (
-    SystemMessagePromptTemplate,
-    HumanMessagePromptTemplate,
-    ChatPromptTemplate,
-    MessagesPlaceholder
-)
-from langchain_openai import OpenAIEmbeddings
-
-from pinecone import Pinecone
-from dotenv import load_dotenv
+import os, json, requests
+from pathlib import Path
 import streamlit as st
-from streamlit_chat import message
-import os
-import time
+from dotenv import load_dotenv
+from streamlit_lottie import st_lottie
 
-from bot import *
+try:
+    from pinecone import Pinecone
+    from langchain_community.chat_models import ChatOpenAI
+    from langchain.chains import ConversationChain
+    from langchain.chains.conversation.memory import ConversationBufferWindowMemory
+    from langchain.prompts import (
+        SystemMessagePromptTemplate,
+        HumanMessagePromptTemplate,
+        ChatPromptTemplate,
+        MessagesPlaceholder,
+    )
+    from langchain_openai import OpenAIEmbeddings
+    LANGCHAIN_OK = True
+except ImportError:
+    LANGCHAIN_OK = False
 
-# Load environment variables
-load_dotenv()
-openai.api_key = os.getenv("OPEN_API_KEY")
-
-# Initialize Pinecone client and index
-pc = Pinecone(api_key=os.getenv("PINE_API_KEY"))
-index = pc.Index("energy-chunk")
-
-# Initialize embedding model
-model = OpenAIEmbeddings(model="text-embedding-3-large", openai_api_key=os.getenv("OPEN_API_KEY"))
-
-# Session states
-if 'responses' not in st.session_state:
-    st.session_state['responses'] = ["Hi, hope you're doing well. Please upload a renewable energy document to get started."]
-if 'requests' not in st.session_state:
-    st.session_state['requests'] = []
-if 'buffer_memory' not in st.session_state:
-    st.session_state['buffer_memory'] = ConversationBufferWindowMemory(k=5, return_messages=True)
-
-# Chat setup
-llm = ChatOpenAI(model_name="gpt-4o-mini", openai_api_key=os.getenv("OPEN_API_KEY"))
-
-system_msg_template = SystemMessagePromptTemplate.from_template(
-    template="Answer the question as truthfully as possible using the provided context, and if the answer is not contained within the text below, say 'I don't know'"
+# local helpers (unchanged logic, stored in bot.py)
+from bot import (
+    find_match,
+    query_refiner,
+    get_conversation_string,
+    pdf_to_text,
+    remove_unwanted_spaces,
+    text_splitter,
+    get_project_names,
 )
-human_msg_template = HumanMessagePromptTemplate.from_template(template="{input}")
-prompt_template = ChatPromptTemplate.from_messages([
-    system_msg_template, MessagesPlaceholder(variable_name="history"), human_msg_template
-])
-conversation = ConversationChain(memory=st.session_state['buffer_memory'], prompt=prompt_template, llm=llm, verbose=True)
+# --------------------------------------------------------------------------
+# 1 · App‑wide config
+# --------------------------------------------------------------------------
+st.set_page_config(
+    page_title="Renewable Energy Copilot",
+    page_icon="🌿",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
-# UI
-st.subheader("🌱 Renewable Energy PDF Reader")
-if 'energy_namespaces' not in st.session_state:
-    st.session_state['energy_namespaces'] = get_project_names(index)
+# --------------------------------------------------------------------------
+# 2 · Runtime settings & API‑keys panel (sidebar)
+# --------------------------------------------------------------------------
+from dotenv import load_dotenv, find_dotenv
+load_dotenv(find_dotenv(usecwd=False), override=False)
 
-response_container = st.container()
-textcontainer = st.container()
+if "dark_mode" not in st.session_state:
+    st.session_state.dark_mode = False
+if "OPENAI_API_KEY" not in st.session_state:
+    st.session_state.OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+if "PINE_API_KEY" not in st.session_state:
+    st.session_state.PINE_API_KEY = os.getenv("PINE_API_KEY", "")
 
+with st.sidebar:
+    st.markdown("### ⚙️ Settings")
+    st.session_state.dark_mode = st.checkbox("🌙 Dark mode", value=st.session_state.dark_mode)
+    st.divider()
+    st.markdown("### 🔑 API Keys")
+    st.session_state.OPENAI_API_KEY = st.text_input(
+        "OpenAI API Key", value=st.session_state.OPENAI_API_KEY, type="password"
+    )
+    st.session_state.PINE_API_KEY = st.text_input(
+        "Pinecone API Key", value=st.session_state.PINE_API_KEY, type="password"
+    )
+    if st.button("Save keys / rerun"):
+        st.experimental_rerun()
 
-if 'file_uploaded' not in st.session_state:
-    st.session_state.file_uploaded = False
-if 'current_page' not in st.session_state:
-    st.session_state['current_page'] = 'upload'
+openai_key = st.session_state.OPENAI_API_KEY.strip()
+pine_key   = st.session_state.PINE_API_KEY.strip()
 
-# Navigation
-st.sidebar.title("Navigation")
-page = st.sidebar.radio("Go to:", ['Upload Document', 'Ask Questions'])
+# --------------------------------------------------------------------------
+# 3 · Global CSS (dark‑mode, bubbles, FAB)
+# --------------------------------------------------------------------------
+primary = "#14E39C"
+bg_dark, bg_dark_2, text_dark = "#0E1117", "#161B22", "#E6EDF3"
+css = f"""
+<style>
+body, .stApp {{
+    {'background:'+bg_dark+'; color:'+text_dark+';' if st.session_state.dark_mode else ''}
+}}
+/* glass bubbles */
+.st-chat-message .st-chat-message-content {{
+    backdrop-filter:blur(10px);
+    border-radius:14px; padding:1rem;
+    border:1px solid rgba(255,255,255,0.15);
+}}
+.st-chat-message:nth-child(even) .st-chat-message-content {{
+    background:rgba(20,227,156,0.08);
+    border:1px solid rgba(20,227,156,0.25);
+}}
+/* floating action button */
+#fab {{
+  position:fixed; bottom:24px; right:28px; z-index:1000;
+}}
+#fab button {{
+  height:52px;width:52px;border-radius:50%; background:{primary};
+  border:none;color:{bg_dark}; font-size:28px;
+  box-shadow:0 4px 12px rgba(20,227,156,0.45);
+}}
+</style>
+"""
+st.markdown(css, unsafe_allow_html=True)
 
-# Reset responses if changing tab
-if st.session_state['current_page'] == 'Ask Questions' and page == 'Upload Document':
-    st.session_state['responses'] = ["Hi, hope you're doing well. Please upload a renewable energy document to get started."]
-    st.session_state['requests'] = []
+# --------------------------------------------------------------------------
+# 4 · Hero banner + Lottie
+# --------------------------------------------------------------------------
+def load_lottie(url: str):
+    try:
+        return requests.get(url).json()
+    except Exception:
+        return None
 
-st.session_state['current_page'] = page
+with st.container():
+    st.markdown(
+        f"""
+        <div style="background:linear-gradient(90deg,{primary} 0%,#0fa47f 100%);
+                    padding:2.5rem 1rem;border-radius:16px;margin-bottom:1rem;
+                    text-align:center;color:{bg_dark}">
+          <h1 style="font-size:2.4rem;margin:0">🌿 Renewable Energy Copilot</h1>
+          <p style="font-size:1.25rem;margin:0.5rem 0 0">
+            AI answers&nbsp;|&nbsp;Audit‑ready sources&nbsp;|&nbsp;Zero manual copy‑paste
+          </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    lottie_json = load_lottie(
+        "https://lottie.host/0cfa906e-d8b0-4b0e-9a67-56b7e7e82ca5/solar-panels.json"
+    )
+    if lottie_json:
+        st_lottie(lottie_json, height=140, speed=0.5, key="solar")
 
-# Upload Tab
-if st.session_state['current_page'] == 'Upload Document':
-    st.subheader("Upload Renewable Energy Document")
-    energy_doc_name_input = st.text_input("Energy Document Namespace:", key="energy_namespace_input")
-    energy_namespace = energy_doc_name_input.strip().replace(" ", "-")
-    uploaded_file = st.file_uploader("Choose a file", type=["txt", "pdf", "docx", "xlsx"], key="file_uploader")
+# --------------------------------------------------------------------------
+# 5 · Initialise or placeholder‑init models if keys absent
+# --------------------------------------------------------------------------
+if openai_key and pine_key and LANGCHAIN_OK:
+    # Pinecone / LangChain objects
+    pc = Pinecone(api_key=pine_key)
+    index = pc.Index("energy-chunk")
 
+    embeddings = OpenAIEmbeddings(
+        model="text-embedding-3-large", openai_api_key=openai_key
+    )
+    llm = ChatOpenAI(model_name="gpt-4o", openai_api_key=openai_key)
 
-    if uploaded_file and st.button('Upload'):
-        with st.spinner("Processing and embedding the document..."):
+    prompt_template = ChatPromptTemplate.from_messages(
+        [
+            SystemMessagePromptTemplate.from_template(
+                "Answer truthfully using the given context. "
+                "If context doesn't have the answer, say “I don’t know”."
+            ),
+            MessagesPlaceholder(variable_name="history"),
+            HumanMessagePromptTemplate.from_template("{input}"),
+        ]
+    )
+    conversation = ConversationChain(
+        memory=ConversationBufferWindowMemory(k=5, return_messages=True),
+        prompt=prompt_template,
+        llm=llm,
+    )
+    namespaces = get_project_names(index)
+else:
+    pc = index = embeddings = llm = conversation = None
+    namespaces = []
+
+# --------------------------------------------------------------------------
+# 6 · Session state
+# --------------------------------------------------------------------------
+st.session_state.setdefault(
+    "responses",
+    ["Hi there 👋 — upload a document to begin."],
+)
+st.session_state.setdefault("requests", [])
+st.session_state.setdefault("namespaces", namespaces)
+st.session_state.setdefault("file_uploaded", False)
+
+# --------------------------------------------------------------------------
+# 7 · Floating‑action button anchor
+# --------------------------------------------------------------------------
+st.markdown('<a id="fab" href="#namespaces"><button>⚙️</button></a>', unsafe_allow_html=True)
+
+# --------------------------------------------------------------------------
+# 8 · Main UI (Upload & Chat tabs)
+# --------------------------------------------------------------------------
+tab_upload, tab_chat = st.tabs(["📄 Upload", "💬 Chat"])
+
+# ---------------- 8.a Upload
+with tab_upload:
+    st.subheader("Upload renewable‑energy documents")
+    if not (openai_key and pine_key and LANGCHAIN_OK):
+        st.info("➡️ Enter your OpenAI & Pinecone keys in the sidebar to enable upload.")
+    else:
+        file_col, meta_col = st.columns([2, 1])
+        with file_col:
+            uploaded_file = st.file_uploader(
+                "Supported: PDF · DOCX · TXT · XLSX",
+                type=["pdf", "docx", "txt", "xlsx"],
+                label_visibility="collapsed",
+            )
+        with meta_col:
+            ns_input = st.text_input("Namespace", placeholder="e.g. Illinois‑Solar‑RFP")
+            ns_clean = ns_input.strip().replace(" ", "-")
+
+        if uploaded_file and st.button("Embed & index ↗", use_container_width=True):
+            if not ns_clean:
+                st.warning("Please supply a namespace.")
+                st.stop()
+
+            status = st.empty()  # timeline
             try:
-                file_content = uploaded_file.read()
-                _, file_extension = os.path.splitext(uploaded_file.name)
-                file_extension = file_extension.lower()
+                status.markdown("🔍 **Reading file** …")
+                content = uploaded_file.read()
+                text = pdf_to_text(content, os.path.splitext(uploaded_file.name)[1])
 
-                text = pdf_to_text(file_content, file_extension)
-                cleaned_text = remove_unwanted_spaces(text)
-                data_upload = text_splitter(cleaned_text)
-                texts = [doc.page_content for doc in data_upload]
+                status.markdown("✂️ **Cleaning text** …")
+                cleaned = remove_unwanted_spaces(text)
 
-                new_embeddings = model.embed_documents(texts)
-                upserts = [{
-                    "id": f"{uploaded_file.name}_{i}",
-                    "values": new_embeddings[i],
-                    "metadata": {"text": texts[i]}
-                } for i in range(len(texts))]
+                status.markdown("📑 **Splitting** …")
+                docs = text_splitter(cleaned)
+                texts = [d.page_content for d in docs]
 
-                index.upsert(vectors=upserts, namespace=energy_namespace)
+                status.markdown("🧠 **Embedding** …")
+                vecs = embeddings.embed_documents(texts)
 
-                st.session_state['energy_namespaces'] = get_project_names(index)
-                st.success(" Document uploaded successfully! You can now ask questions.")
-                st.session_state.file_uploaded = True
-                st.session_state.uploaded_file = uploaded_file
-                time.sleep(2)
+                status.markdown("🚀 **Upserting to Pinecone** …")
+                index.upsert(
+                    vectors=[
+                        {
+                            "id": f"{uploaded_file.name}_{i}",
+                            "values": vecs[i],
+                            "metadata": {"text": texts[i]},
+                        }
+                        for i in range(len(texts))
+                    ],
+                    namespace=ns_clean,
+                )
+
+                st.session_state.namespaces = get_project_names(index)
+                status.success("✅ All done — switch to **Chat** ➡️")
 
             except Exception as e:
-                st.error(f"Error handling file upload: {e}")
+                status.error(f"Upload failed: {e}")
 
-# Query Tab
-elif st.session_state['current_page'] == 'Ask Questions':
-    st.subheader("Ask a Question About Energy Documents")
-    selected_namespace = st.selectbox("Select Energy Document Namespace:", st.session_state['energy_namespaces'], key="energy_namespace")
-    query = st.text_input("Enter your question:", key="input")
-    submit_button = st.button("Submit")
+# ---------------- 8.b Chat
+with tab_chat:
+    st.subheader("Ask questions about your documents")
+    if not (openai_key and pine_key and LANGCHAIN_OK):
+        st.info("➡️ Enter your API keys in the sidebar to enable chat.")
+    else:
+        if st.session_state.namespaces:
+            selected_ns = st.selectbox("Namespace", st.session_state.namespaces)
+        else:
+            st.info("No namespaces yet — upload a document first.")
+            selected_ns = None
 
-    if query and selected_namespace and submit_button:
-        with st.spinner("Fetching answers from your documents..."):
-            try:
-                conversation_string = get_conversation_string()
-                refined_query = query_refiner(conversation_string, query)
-                context = find_match(refined_query, selected_namespace)
-                response = conversation.predict(input=f"Context:\n{context}\n\nQuery:\n{query}")
-                st.session_state.requests.append(query)
-                st.session_state.responses.append(response)
-            except Exception as e:
-                st.error(f"Error processing your question: {e}")
+        # history
+        with st.chat_message("assistant"):
+            st.markdown(st.session_state.responses[0])
 
-# Chat History
-with response_container:
-    if st.session_state['responses']:
-        for i in range(len(st.session_state['responses'])):
-            message(st.session_state['responses'][i], key=str(i))
-            if i < len(st.session_state['requests']):
-                message(st.session_state['requests'][i], is_user=True, key=str(i) + '_user')
+        for i in range(1, len(st.session_state.responses)):
+            with st.chat_message("user"):
+                st.markdown(st.session_state.requests[i - 1])
+            with st.chat_message("assistant"):
+                st.markdown(st.session_state.responses[i])
+
+        # new prompt
+        user_prompt = st.chat_input("Ask something about the document…")
+        if user_prompt and selected_ns:
+            with st.chat_message("user"):
+                st.markdown(user_prompt)
+
+            with st.spinner("Thinking …"):
+                try:
+                    refined = query_refiner(get_conversation_string(), user_prompt)
+                    context = find_match(refined, selected_ns)
+                    answer = conversation.predict(
+                        input=f"Context:\n{context}\n\nQuery:\n{user_prompt}"
+                    )
+
+                    st.session_state.requests.append(user_prompt)
+                    st.session_state.responses.append(answer)
+
+                    with st.chat_message("assistant"):
+                        st.markdown(answer)
+                        with st.expander("🔗 Sources"):
+                            st.markdown(context)
+                except Exception as e:
+                    st.error(f"Error: {e}")
+
+# --------------------------------------------------------------------------
+# 9 · Namespace manager
+# --------------------------------------------------------------------------
+st.markdown('<span id="namespaces"></span>', unsafe_allow_html=True)
+with st.container():
+    st.subheader("Namespace manager")
+    if not (openai_key and pine_key and LANGCHAIN_OK):
+        st.info("Enter keys to manage namespaces.")
+    elif st.session_state.namespaces:
+        chosen_ns = st.selectbox("Select namespace", st.session_state.namespaces, key="ns_mgr")
+        col_del, col_refresh = st.columns([1, 1])
+        if col_del.button("🗑️ Delete namespace"):
+            pc.delete_namespace(index_name="energy-chunk", namespace=chosen_ns)
+            st.session_state.namespaces = get_project_names(index)
+            st.success("Deleted.")
+        if col_refresh.button("🔄 Refresh list"):
+            st.session_state.namespaces = get_project_names(index)
+            st.success("Refreshed.")
+    else:
+        st.info("No namespaces yet.")
