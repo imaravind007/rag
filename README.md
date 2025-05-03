@@ -20,3 +20,21 @@ Renewable Energy Copilot is a Streamlit-based application that leverages OpenAI 
    ```bash
    git clone <repository-url>
    cd rag
+
+2. Create a virtual environment and activate it
+   ```bash
+   python -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+4. Install Dependencies:
+   ```bash
+   pip install -r requirements.txt
+
+5. Create a .env file in the root directory:
+   ```bash
+   OPENAI_API_KEY=your_openai_api_key
+   PINE_API_KEY=your_pinecone_api_key
+
+6. Usage:
+   ```bash
+   streamlit run main.py
