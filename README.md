@@ -23,7 +23,7 @@ Renewable Energy Copilot is a Streamlit-based application that leverages OpenAI 
 - **Document Parsing**: Utilizes libraries like `Docling` for handling various data types such as  PDF, DOCX, TXT, and XLSX.
 
 ---
-
+## Architecture Diagram
 ![Architecture Diagram](architecture-diagram.png)
 
 ## Installation
