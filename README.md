@@ -1,4 +1,4 @@
-# Renewable Energy Copilot 🌿
+# Renewable Energy DataRoom Copilot 🌿
 
 Renewable Energy Copilot is a Streamlit-based application that leverages OpenAI and Pinecone to provide AI-powered insights and document analysis for renewable energy projects. It allows users to upload documents, embed them into a vector database, and query them using natural language.
 
