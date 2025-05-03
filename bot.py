@@ -1,3 +1,5 @@
+import tempfile
+from typing import List
 from pinecone import Pinecone
 import openai
 import streamlit as st
@@ -10,7 +12,9 @@ import os
 import io
 import fitz
 from dotenv import load_dotenv
-
+from langchain_docling import DoclingLoader
+from docling.chunking import HierarchicalChunker
+from langchain_core.documents import Document 
 
 
 
@@ -38,13 +42,13 @@ def find_match(input, namespace):
     )
 
     matches = result.matches
-
+    sources = set([match.metadata['title'] for match in matches])
     if not matches:
-        return "Hi, how may I help you? Please upload a document."
+        return "Sorry, I couldn't find any relevant information.", []
     elif len(matches) == 1:
-        return matches[0].metadata['text']
+        return matches[0].metadata['text'], sources
     else:
-        return "\n".join([match.metadata['text'] for match in matches[:3]])
+        return "\n".join([match.metadata['text'] for match in matches]), sources
 
 # --- OpenAI Query Refiner ---
 def query_refiner(conversation, query):
@@ -69,18 +73,43 @@ def get_conversation_string():
     return conversation_string
 
 # --- Document Parsing ---
+def load_docs(content: bytes, ext: str) -> List[Document]:
+    """
+    Return a list[Document] ready for embedding.
+      * For PDFs (and any other format Docling supports) we call DoclingLoader
+        with HierarchicalChunker.
+      * For everything else we fall back to the previous
+        text‑cleanup  ➜  RecursiveCharacterTextSplitter path.
+    """
+    ext = ext.lower()
+    if ext in {".pdf", ".docx", ".pptx", ".html"}:   
+        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+            tmp.write(content)
+            tmp.flush()                 
+            loader = DoclingLoader(
+                file_path=tmp.name,
+                chunker=HierarchicalChunker(),           
+            )
+            docs = loader.load()           
+        return docs
+
+    # ----- For txt / xlsx (or anything Docling can’t parse yet)
+    text      = pdf_to_text(content, ext)          
+    cleaned   = remove_unwanted_spaces(text)             
+    return text_splitter(cleaned)    
+
 def pdf_to_text(content, file_extension):
     if file_extension == ".txt":
         return content.decode('utf-8')
     elif file_extension == ".pdf":
         pdf_document = fitz.open("pdf", content)
-        text = "".join([page.get_text() for page in pdf_document])
+        text = "".join([f"{page.get_text()}\nPage:{str(page.number+1)}" for page in pdf_document])
         pdf_document.close()
         return text
     elif file_extension == ".docx":
         doc = Document(io.BytesIO(content))
         return "\n".join([paragraph.text for paragraph in doc.paragraphs])
-    elif file_extension in [".xlsx", ".xlsm"]:   
+    elif file_extension in [".xlsx", ".xlsm", ".xlsb", ".xls"]:
         excel_io = io.BytesIO(content)
         dfs = pd.read_excel(excel_io, sheet_name=None)  # All sheets
         combined_text = ""

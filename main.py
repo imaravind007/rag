@@ -20,21 +20,19 @@ try:
 except ImportError:
     LANGCHAIN_OK = False
 
-# local helpers (unchanged logic, stored in bot.py)
+# local helpers (stored in bot.py)
 from bot import (
     find_match,
+    load_docs,
     query_refiner,
     get_conversation_string,
-    pdf_to_text,
-    remove_unwanted_spaces,
-    text_splitter,
     get_project_names,
 )
 # --------------------------------------------------------------------------
 # 1 · App‑wide config
 # --------------------------------------------------------------------------
 st.set_page_config(
-    page_title="Renewable Energy Copilot",
+    page_title="Renewable Dataroom Copilot",
     page_icon="🌿",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -54,8 +52,6 @@ if "PINE_API_KEY" not in st.session_state:
     st.session_state.PINE_API_KEY = os.getenv("PINE_API_KEY", "")
 
 with st.sidebar:
-    st.markdown("### ⚙️ Settings")
-    st.session_state.dark_mode = st.checkbox("🌙 Dark mode", value=st.session_state.dark_mode)
     st.divider()
     st.markdown("### 🔑 API Keys")
     st.session_state.OPENAI_API_KEY = st.text_input(
@@ -118,7 +114,7 @@ with st.container():
         <div style="background:linear-gradient(90deg,{primary} 0%,#0fa47f 100%);
                     padding:2.5rem 1rem;border-radius:16px;margin-bottom:1rem;
                     text-align:center;color:{bg_dark}">
-          <h1 style="font-size:2.4rem;margin:0">🌿 Renewable Energy Copilot</h1>
+          <h1 style="font-size:2.4rem;margin:0">🌿 Renewable Dataroom Copilot</h1>
           <p style="font-size:1.25rem;margin:0.5rem 0 0">
             AI answers&nbsp;|&nbsp;Audit‑ready sources&nbsp;|&nbsp;Zero manual copy‑paste
           </p>
@@ -188,54 +184,56 @@ tab_upload, tab_chat = st.tabs(["📄 Upload", "💬 Chat"])
 
 # ---------------- 8.a Upload
 with tab_upload:
-    st.subheader("Upload renewable‑energy documents")
+    st.subheader("Upload your documents")
     if not (openai_key and pine_key and LANGCHAIN_OK):
         st.info("➡️ Enter your OpenAI & Pinecone keys in the sidebar to enable upload.")
     else:
         file_col, meta_col = st.columns([2, 1])
         with file_col:
-            uploaded_file = st.file_uploader(
-                "Supported: PDF · DOCX · TXT · XLSX",
-                type=["pdf", "docx", "txt", "xlsx"],
+            uploaded_files = st.file_uploader(
+                "Supported: PDF · DOCX · TXT · XLS*",
+                type=["pdf", "docx", "txt", "xlsx", "xlsm", "xlsb", "xls"],
                 label_visibility="collapsed",
+                accept_multiple_files=True
             )
         with meta_col:
-            ns_input = st.text_input("Namespace", placeholder="e.g. Illinois‑Solar‑RFP")
+            ns_input = st.text_input("Namespace", placeholder="e.g. Solar-Lease-Agreement.pdf")
             ns_clean = ns_input.strip().replace(" ", "-")
 
-        if uploaded_file and st.button("Embed & index ↗", use_container_width=True):
+        if uploaded_files and st.button("Embed & index ↗", use_container_width=True):
             if not ns_clean:
                 st.warning("Please supply a namespace.")
                 st.stop()
 
             status = st.empty()  # timeline
             try:
-                status.markdown("🔍 **Reading file** …")
-                content = uploaded_file.read()
-                text = pdf_to_text(content, os.path.splitext(uploaded_file.name)[1])
+                for uploaded_file in uploaded_files:
 
-                status.markdown("✂️ **Cleaning text** …")
-                cleaned = remove_unwanted_spaces(text)
-
-                status.markdown("📑 **Splitting** …")
-                docs = text_splitter(cleaned)
-                texts = [d.page_content for d in docs]
-
-                status.markdown("🧠 **Embedding** …")
-                vecs = embeddings.embed_documents(texts)
-
-                status.markdown("🚀 **Upserting to Pinecone** …")
-                index.upsert(
-                    vectors=[
-                        {
-                            "id": f"{uploaded_file.name}_{i}",
-                            "values": vecs[i],
-                            "metadata": {"text": texts[i]},
-                        }
-                        for i in range(len(texts))
-                    ],
-                    namespace=ns_clean,
-                )
+                    status.markdown(f"🔍 **Reading file** {uploaded_file.name} …")
+                    content = uploaded_file.read()
+                    
+                    status.markdown("📑 **Chunking with Docling** …")
+                    docs  = load_docs(
+                            content,
+                            os.path.splitext(uploaded_file.name)[1]
+                            )               
+                    texts = [d.page_content for d in docs]
+                    
+                    status.markdown("🧠 **Embedding** …")
+                    vecs = embeddings.embed_documents(texts)
+                    
+                    status.markdown("🚀 **Upserting to Pinecone** …")
+                    index.upsert(
+                        vectors=[
+                            {
+                                "id": f"{uploaded_file.name}_{i}",
+                                "values": vecs[i],
+                                "metadata": {"text": texts[i], "title": uploaded_file.name},
+                            }
+                            for i in range(len(texts))
+                        ],
+                        namespace=ns_clean,
+                    )
 
                 st.session_state.namespaces = get_project_names(index)
                 status.success("✅ All done — switch to **Chat** ➡️")
@@ -274,7 +272,7 @@ with tab_chat:
             with st.spinner("Thinking …"):
                 try:
                     refined = query_refiner(get_conversation_string(), user_prompt)
-                    context = find_match(refined, selected_ns)
+                    context,sources = find_match(refined, selected_ns)
                     answer = conversation.predict(
                         input=f"Context:\n{context}\n\nQuery:\n{user_prompt}"
                     )
@@ -284,8 +282,9 @@ with tab_chat:
 
                     with st.chat_message("assistant"):
                         st.markdown(answer)
-                        with st.expander("🔗 Sources"):
-                            st.markdown(context)
+                        if sources: 
+                            with st.expander("🔗 Sources"):
+                                st.markdown("\n".join(f"{i}. {src}" for i, src in enumerate(sources, 1)))
                 except Exception as e:
                     st.error(f"Error: {e}")
 
